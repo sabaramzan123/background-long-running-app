@@ -1,0 +1,156 @@
+1. S3 BUCKET
+
+Name:    image-processor-manual-<suffix>
+Region:  us-east-1
+
+CORS:
+[{"AllowedHeaders":["*"],"AllowedMethods":["GET","PUT","HEAD"],"AllowedOrigins":["*"],"ExposeHeaders":["ETag"],"MaxAgeSeconds":3000}]
+
+
+2. DYNAMODB TABLE
+
+Name:           image-processor-jobs-manual
+Partition key:  jobId  (String)
+Capacity:       On-demand
+
+
+3. SQS QUEUES
+
+--- DLQ ---
+Name:  image-processor-dlq-manual
+Type:  Standard
+
+--- Main queue ---
+Name:                       image-processor-jobs-manual
+Type:                       Standard
+Visibility timeout:         120
+Message retention:          4 days
+Receive wait time:          10
+Dead-letter queue:          image-processor-dlq-manual
+Maximum receives:           3
+
+
+
+4. LAMBDA IAM ROLE
+
+Role name:           image-processor-lambda-role-manual
+Trusted entity:      AWS service / Lambda
+Managed policy:      AWSLambdaBasicExecutionRole
+
+Inline policy name:  lambda-app-access
+Inline policy JSON:
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject","s3:PutObject"],
+      "Resource": "arn:aws:s3:::image-processor-manual-<suffix>/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["sqs:ReceiveMessage","sqs:DeleteMessage","sqs:GetQueueAttributes","sqs:ChangeMessageVisibility"],
+      "Resource": "arn:aws:sqs:us-east-1:<account-id>:image-processor-jobs-manual"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["dynamodb:UpdateItem","dynamodb:GetItem","dynamodb:PutItem"],
+      "Resource": "arn:aws:dynamodb:us-east-1:<account-id>:table/image-processor-jobs-manual"
+    }
+  ]
+}
+
+
+5. LAMBDA FUNCTION
+
+--- Build zip (PowerShell, Docker required) ---
+cd "E:\Claude Code\image-processor-demo\lambda\processor"
+docker run --rm -v "${PWD}:/var/task" public.ecr.aws/sam/build-nodejs20.x:latest bash -c "cd /var/task && npm install --omit=dev --platform=linux --arch=x64 --include=optional sharp && npm install --omit=dev && zip -qr processor.zip . -x '*.zip' 'README.md'"
+
+--- Create function ---
+Name:          image-processor-manual
+Runtime:       Node.js 20.x
+Architecture:  x86_64
+Role:          image-processor-lambda-role-manual
+
+--- Upload ---
+File:  processor.zip
+
+--- Runtime settings ---
+Handler:  index.handler
+
+--- General configuration ---
+Memory:   1024 MB
+Timeout:  1 min
+
+--- Environment variables ---
+S3_BUCKET             image-processor-manual-<suffix>
+DYNAMODB_TABLE        image-processor-jobs-manual
+ARTIFICIAL_DELAY_MS   5000
+
+
+6. SQS TRIGGER ON LAMBDA
+
+Source:                       SQS
+Queue:                        image-processor-jobs-manual
+Batch size:                   1
+Batch window:                 0
+Report batch item failures:   ON
+
+
+7. AMPLIFY IAM ROLE
+
+Role name:  image-processor-amplify-compute-manual
+
+Trust policy:
+
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": { "Service": "amplify.amazonaws.com" },
+    "Action": "sts:AssumeRole"
+  }]
+}
+
+Inline policy name:  amplify-app-access
+Inline policy JSON:
+
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:GetObject","s3:PutObject"],
+      "Resource": "arn:aws:s3:::image-processor-manual-<suffix>/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["sqs:SendMessage","sqs:GetQueueAttributes"],
+      "Resource": "arn:aws:sqs:us-east-1:<account-id>:image-processor-jobs-manual"
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["dynamodb:GetItem","dynamodb:PutItem","dynamodb:UpdateItem"],
+      "Resource": "arn:aws:dynamodb:us-east-1:<account-id>:table/image-processor-jobs-manual"
+    }
+  ]
+}
+
+
+8. AMPLIFY APP
+
+Name:           image-processor-web-manual
+Source:         GitHub / main
+Framework:      Next.js - SSR
+Service role:   Create new (accept defaults)
+
+--- Environment variables ---
+S3_BUCKET        image-processor-manual-<suffix>
+SQS_QUEUE_URL    https://sqs.us-east-1.amazonaws.com/<account-id>/image-processor-jobs-manual
+DYNAMODB_TABLE   image-processor-jobs-manual
+
+--- After first deploy ---
+App settings -> IAM roles -> Compute service role -> image-processor-amplify-compute-manual
+Hosting -> Redeploy this version

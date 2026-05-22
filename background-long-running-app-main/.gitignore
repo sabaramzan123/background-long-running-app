@@ -1,0 +1,19 @@
+node_modules
+.next
+out
+.env.local
+.env*.local
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/.terraform.lock.hcl
+terraform/*.tfvars
+
+# Lambda build artifacts
+lambda/processor/node_modules
+lambda/processor/*.zip
+lambda/build/
+
+.DS_Store
