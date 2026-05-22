@@ -1,0 +1,20 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci
+    build:
+      commands:
+        # Amplify Gen 2 SSR does NOT automatically pass console env vars to the
+        # runtime. Bake them into .env.production so Next.js picks them up.
+        - env | grep -E "^(S3_BUCKET|SQS_QUEUE_URL|DYNAMODB_TABLE)=" >> .env.production
+        - npm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - '**/*'
+  cache:
+    paths:
+      - node_modules/**/*
+      - .next/cache/**/*
